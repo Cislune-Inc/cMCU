@@ -4,6 +4,8 @@
 
 namespace config {
 
+constexpr uint8_t kEstopOutPin = 6;
+
 constexpr uint32_t kHostBaud = 115200;
 constexpr uint32_t kRadioBaud = 115200;
 constexpr uint32_t kRoboclawBaud = 38400;
@@ -11,6 +13,8 @@ constexpr uint32_t kRoboclawBaud = 38400;
 constexpr uint32_t kLoopDelayMs = 5;
 constexpr uint32_t kTelemetryPeriodMs = 50;
 constexpr uint32_t kMotorUpdatePeriodMs = 20;
+constexpr uint32_t kRoboclawTimeoutUs = 100000;
+constexpr uint32_t kRoboclawSetupDelayMs = 500;
 
 constexpr uint32_t kRadioTimeoutMs = 250;
 constexpr uint32_t kHostTimeoutMs = 250;
@@ -23,5 +27,6 @@ constexpr float kInputDeadband = 0.05f;
 
 constexpr uint8_t kFrontRoboclawAddress = 0x80;
 constexpr uint8_t kRearRoboclawAddress = 0x81;
+constexpr uint8_t kBatteryRoboclawAddress = 0x81;
 
 }  // namespace config

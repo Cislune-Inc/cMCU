@@ -16,6 +16,9 @@ SystemState g_state = {};
 void setup() {
   g_state.startup_ms = millis();
 
+  pinMode(config::kEstopOutPin, OUTPUT);
+  digitalWrite(config::kEstopOutPin, HIGH);
+
   setup_host_link();
   setup_radio_link();
   setup_roboclaw_link(g_state);

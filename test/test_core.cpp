@@ -61,7 +61,7 @@ static void test_fault_for_missing_radio_command() {
 
   control_logic::update_state(state, 2000U);
   assert(state.mode == OperatingMode::SAFE);
-  assert(state.fault == FaultCode::RADIO_TIMEOUT);
+  assert(state.fault == FaultCode::HOST_TIMEOUT);
 }
 
 static void test_host_protocol_selects_mode() {
@@ -113,6 +113,24 @@ static void test_host_requires_handshake_before_motion() {
   assert(state.fault == FaultCode::HOST_TIMEOUT);
 }
 
+static void test_keyboard_mode_does_not_require_radio_link() {
+  SystemState state = {};
+  state.startup_ms = 0U;
+  state.roboclaw_ok = true;
+  state.host.handshake_complete = true;
+  state.host.selected_mode = OperatingMode::KEYBOARD;
+  state.host.keyboard_command.source_mode = OperatingMode::KEYBOARD;
+  state.host.keyboard_command.throttle = 0.3f;
+  state.host.keyboard_command.valid = true;
+  state.host.keyboard_command.received_ms = 1990U;
+  state.telemetry.battery_valid = true;
+  state.telemetry.battery_voltage = 24.0f;
+
+  control_logic::update_state(state, 2000U);
+  assert(state.mode == OperatingMode::KEYBOARD);
+  assert(state.fault == FaultCode::OK);
+}
+
 static void test_telemetry_is_readable_and_reordered() {
   SystemState state = {};
   state.mode = OperatingMode::KEYBOARD;
@@ -144,6 +162,7 @@ int main() {
   test_host_protocol_selects_mode();
   test_auto_radio_uses_selected_host_mode();
   test_host_requires_handshake_before_motion();
+  test_keyboard_mode_does_not_require_radio_link();
   test_telemetry_is_readable_and_reordered();
   return 0;
 }

@@ -67,12 +67,11 @@ WheelOutputs build_wheel_outputs(const MixedDrive& drive, DriveMode mode) {
 
 static MotionCommand select_active_command(const SystemState& state) {
   switch (state.mode) {
-    case OperatingMode::JOYSTICK:
-      return state.radio.joystick_command;
     case OperatingMode::KEYBOARD:
       return state.host.keyboard_command;
     case OperatingMode::AUTONOMOUS:
       return state.host.autonomous_command;
+    case OperatingMode::JOYSTICK:
     case OperatingMode::SAFE:
     default:
       return {};
@@ -80,13 +79,7 @@ static MotionCommand select_active_command(const SystemState& state) {
 }
 
 static OperatingMode select_operating_mode(const SystemState& state) {
-  if (state.radio.selected_mode == OperatingMode::JOYSTICK) {
-    return OperatingMode::JOYSTICK;
-  }
-  if (state.host.selected_mode == OperatingMode::AUTONOMOUS) {
-    return OperatingMode::AUTONOMOUS;
-  }
-  return OperatingMode::KEYBOARD;
+  return state.host.selected_mode;
 }
 
 static FaultCode compute_fault(const SystemState& state, uint32_t now_ms) {
@@ -97,22 +90,8 @@ static FaultCode compute_fault(const SystemState& state, uint32_t now_ms) {
     return FaultCode::ROBOCLAW;
   }
   if (state.telemetry.battery_valid &&
-      state.telemetry.battery_voltage <= config::kBatteryCriticalVolts) {
+      state.telemetry.battery_voltage < config::kBatteryCriticalVolts) {
     return FaultCode::BATTERY;
-  }
-  if (!state.radio.linked ||
-      (now_ms - state.radio.last_packet_ms) > config::kRadioTimeoutMs) {
-    return FaultCode::RADIO_TIMEOUT;
-  }
-  if (state.radio.estop) {
-    return FaultCode::ESTOP;
-  }
-  if (state.mode == OperatingMode::JOYSTICK) {
-    if (!state.radio.joystick_command.valid ||
-        (now_ms - state.radio.joystick_command.received_ms) > config::kRadioTimeoutMs) {
-      return FaultCode::RADIO_TIMEOUT;
-    }
-    return FaultCode::OK;
   }
   if (state.mode == OperatingMode::KEYBOARD || state.mode == OperatingMode::AUTONOMOUS) {
     if (!state.host.handshake_complete) {

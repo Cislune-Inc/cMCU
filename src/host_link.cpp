@@ -11,10 +11,12 @@ constexpr size_t kBufferLen = 96;
 char g_rx_buffer[kBufferLen];
 size_t g_rx_len = 0;
 
+HardwareSerial& g_host_serial = Serial1;
+
 void handle_line(SystemState& state, const char* line, uint32_t now_ms) {
-  const protocol::ParseResult result = protocol::parse_host_line(line, now_ms);
+  protocol::ParseResult result = protocol::parse_host_line(line, now_ms);
   if (!result.ok) {
-    Serial.println("ERR,H");
+    g_host_serial.println("ERR,H");
     return;
   }
 
@@ -22,12 +24,12 @@ void handle_line(SystemState& state, const char* line, uint32_t now_ms) {
     state.host.last_pong_ms = now_ms;
     state.host.linked = true;
     state.host.handshake_complete = true;
-    Serial.println("ACK,PONG");
+    g_host_serial.println("ACK,PONG");
     return;
   }
 
   if (!state.host.handshake_complete) {
-    Serial.println("ERR,WAIT_PONG");
+    g_host_serial.println("ERR,WAIT_PONG");
     return;
   }
 
@@ -36,14 +38,14 @@ void handle_line(SystemState& state, const char* line, uint32_t now_ms) {
 
   if (result.is_mode_select) {
     state.host.selected_mode = result.selected_mode;
-    Serial.print("ACK,MODE,");
-    Serial.println(static_cast<char>(state.host.selected_mode));
+    g_host_serial.print("ACK,MODE,");
+    g_host_serial.println(static_cast<char>(state.host.selected_mode));
     return;
   }
   if (result.is_drive_mode) {
     state.host.requested_drive_mode = result.drive_mode;
-    Serial.print("ACK,DRIVE,");
-    Serial.println(static_cast<char>(state.host.requested_drive_mode));
+    g_host_serial.print("ACK,DRIVE,");
+    g_host_serial.println(static_cast<char>(state.host.requested_drive_mode));
     return;
   }
   if (!result.is_motion) {
@@ -57,18 +59,18 @@ void handle_line(SystemState& state, const char* line, uint32_t now_ms) {
   } else if (state.host.selected_mode == OperatingMode::AUTONOMOUS) {
     state.host.autonomous_command = result.motion;
   }
-  Serial.println("ACK,CMD");
+  g_host_serial.println("ACK,CMD");
 }
 
 }  // namespace
 
 void setup_host_link() {
-  Serial.begin(config::kHostBaud);
+  g_host_serial.begin(config::kHostBaud);
 }
 
 void update_host_link(SystemState& state, uint32_t now_ms) {
-  while (Serial.available() > 0) {
-    const char c = static_cast<char>(Serial.read());
+  while (g_host_serial.available() > 0) {
+    const char c = static_cast<char>(g_host_serial.read());
     if (c == '\r') {
       continue;
     }
@@ -99,5 +101,5 @@ void send_telemetry(SystemState& state, uint32_t now_ms) {
 
   char buffer[160];
   protocol::format_telemetry(state, buffer, sizeof(buffer));
-  Serial.println(buffer);
+  g_host_serial.println(buffer);
 }
