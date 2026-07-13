@@ -71,6 +71,13 @@ static void test_host_protocol_selects_mode() {
   assert(result.selected_mode == OperatingMode::AUTONOMOUS);
 }
 
+static void test_host_protocol_selects_joystick_mode() {
+  const protocol::ParseResult result = protocol::parse_host_line("M,J", 55U);
+  assert(result.ok);
+  assert(result.is_mode_select);
+  assert(result.selected_mode == OperatingMode::JOYSTICK);
+}
+
 static void test_auto_radio_uses_selected_host_mode() {
   SystemState state = {};
   state.startup_ms = 0U;
@@ -131,6 +138,26 @@ static void test_keyboard_mode_does_not_require_radio_link() {
   assert(state.fault == FaultCode::OK);
 }
 
+static void test_joystick_mode_uses_radio_command() {
+  SystemState state = {};
+  state.startup_ms = 0U;
+  state.roboclaw_ok = true;
+  state.host.selected_mode = OperatingMode::JOYSTICK;
+  state.radio.linked = true;
+  state.radio.last_packet_ms = 1990U;
+  state.radio.joystick_command.source_mode = OperatingMode::JOYSTICK;
+  state.radio.joystick_command.throttle = 0.3f;
+  state.radio.joystick_command.valid = true;
+  state.radio.joystick_command.received_ms = 1990U;
+  state.telemetry.battery_valid = true;
+  state.telemetry.battery_voltage = 24.0f;
+
+  control_logic::update_state(state, 2000U);
+  assert(state.mode == OperatingMode::JOYSTICK);
+  assert(state.fault == FaultCode::OK);
+  assert(state.active_command.source_mode == OperatingMode::JOYSTICK);
+}
+
 static void test_telemetry_is_readable_and_reordered() {
   SystemState state = {};
   state.mode = OperatingMode::KEYBOARD;
@@ -160,9 +187,11 @@ int main() {
   test_fault_for_missing_host_command();
   test_fault_for_missing_radio_command();
   test_host_protocol_selects_mode();
+  test_host_protocol_selects_joystick_mode();
   test_auto_radio_uses_selected_host_mode();
   test_host_requires_handshake_before_motion();
   test_keyboard_mode_does_not_require_radio_link();
+  test_joystick_mode_uses_radio_command();
   test_telemetry_is_readable_and_reordered();
   return 0;
 }

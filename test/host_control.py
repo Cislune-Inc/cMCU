@@ -64,6 +64,7 @@ class UiState:
 
 HELP = """
   p -> send PONG handshake
+  j -> select joystick mode (M,J)
   k -> select keyboard mode (M,K)
   o -> select autonomous mode (M,A)
   u -> select duty drive mode (D,U)
@@ -156,7 +157,7 @@ def maybe_read_teensy(ser: serial.Serial, ui: UiState) -> None:
 
 def explicit_mode(state: ControlState, ser: serial.Serial, ui: UiState) -> None:
     print("\nExplicit command mode.")
-    print("Commands: pong, mode <K|A>, drive <U|V>, set <thr|turn> <value>, estop <0|1>, zero, send, exit")
+    print("Commands: pong, mode <J|K|A>, drive <U|V>, set <thr|turn> <value>, estop <0|1>, zero, send, exit")
     while True:
         try:
             line = input("cmd> ").strip()
@@ -186,7 +187,7 @@ def explicit_mode(state: ControlState, ser: serial.Serial, ui: UiState) -> None:
             continue
 
         parts = line.split()
-        if len(parts) == 2 and parts[0] == "mode" and parts[1] in {"K", "A"}:
+        if len(parts) == 2 and parts[0] == "mode" and parts[1] in {"J", "K", "A"}:
             pkt = f"M,{parts[1]}"
             send_line(ser, pkt)
             ui.last_tx = pkt
@@ -230,6 +231,11 @@ def handle_key(key, state: ControlState, ser: serial.Serial, ui: UiState):
     if key == "k":
         send_line(ser, "M,K")
         ui.last_tx = "M,K"
+        redraw(ui)
+        return True
+    if key == "j":
+        send_line(ser, "M,J")
+        ui.last_tx = "M,J"
         redraw(ui)
         return True
     if key == "o":

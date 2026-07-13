@@ -5,6 +5,8 @@
 namespace config {
 
 constexpr uint8_t kEstopOutPin = 6;
+constexpr uint8_t kRadioCePin = 2;
+constexpr uint8_t kRadioCsnPin = 10;
 
 constexpr uint32_t kHostBaud = 115200;
 constexpr uint32_t kRadioBaud = 115200;

@@ -67,11 +67,15 @@ WheelOutputs build_wheel_outputs(const MixedDrive& drive, DriveMode mode) {
 
 static MotionCommand select_active_command(const SystemState& state) {
   switch (state.mode) {
+    case OperatingMode::JOYSTICK: {
+      MotionCommand motion = state.radio.joystick_command;
+      motion.throttle = -motion.throttle;
+      return motion;
+    }
     case OperatingMode::KEYBOARD:
       return state.host.keyboard_command;
     case OperatingMode::AUTONOMOUS:
       return state.host.autonomous_command;
-    case OperatingMode::JOYSTICK:
     case OperatingMode::SAFE:
     default:
       return {};
@@ -92,6 +96,19 @@ static FaultCode compute_fault(const SystemState& state, uint32_t now_ms) {
   if (state.telemetry.battery_valid &&
       state.telemetry.battery_voltage < config::kBatteryCriticalVolts) {
     return FaultCode::BATTERY;
+  }
+  if (state.mode == OperatingMode::JOYSTICK) {
+    if (!state.radio.linked) {
+      return FaultCode::RADIO_TIMEOUT;
+    }
+    if (state.radio.estop) {
+      return FaultCode::ESTOP;
+    }
+    if (!state.radio.joystick_command.valid ||
+        state.radio.joystick_command.received_ms == 0U) {
+      return FaultCode::RADIO_TIMEOUT;
+    }
+    return FaultCode::OK;
   }
   if (state.mode == OperatingMode::KEYBOARD || state.mode == OperatingMode::AUTONOMOUS) {
     if (!state.host.handshake_complete) {

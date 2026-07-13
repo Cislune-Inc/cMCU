@@ -111,7 +111,8 @@ ParseResult parse_host_line(const char* line, uint32_t now_ms) {
   if (sscanf(line, "M,%c", &mode_char) == 1) {
     OperatingMode mode;
     if (parse_mode_char(mode_char, mode) &&
-        (mode == OperatingMode::KEYBOARD || mode == OperatingMode::AUTONOMOUS)) {
+        (mode == OperatingMode::JOYSTICK || mode == OperatingMode::KEYBOARD ||
+         mode == OperatingMode::AUTONOMOUS)) {
       result.ok = true;
       result.is_mode_select = true;
       result.selected_mode = mode;
