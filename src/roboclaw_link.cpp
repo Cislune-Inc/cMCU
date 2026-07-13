@@ -3,57 +3,87 @@
 #include <Arduino.h>
 
 #include "RoboClaw.h"
+#include "board_pins.h"
 #include "config.h"
 
 namespace {
 
-RoboClaw g_roboclaw(&Serial2, config::kRoboclawTimeoutUs);
+RoboClaw g_front(&board::front_roboclaw_uart, config::kRoboclawTimeoutUs);
+RoboClaw g_rear(&board::rear_roboclaw_uart, config::kRoboclawTimeoutUs);
 uint32_t g_last_telemetry_ms = 0;
-uint32_t g_last_debug_ms = 0;
 
+#if CMCU_ENABLE_DUTY_TEST
 int16_t apply_direction(int16_t value, int8_t direction) {
   return static_cast<int16_t>(value * direction);
 }
+#endif
 
 int32_t apply_direction(int32_t value, int8_t direction) {
   return value * direction;
 }
 
-bool probe_address(uint8_t address) {
-  char version[64] = {0};
-  return g_roboclaw.ReadVersion(address, version);
+bool probe(RoboClaw& roboclaw, uint8_t address) {
+  char version[64] = {};
+  return roboclaw.ReadVersion(address, version);
+}
+
+bool read_controller(RoboClaw& roboclaw, uint8_t address, size_t first_wheel,
+                     RoboclawState& controller, TelemetryState& telemetry,
+                     uint32_t now_ms) {
+  bool encoder_valid[2] = {};
+  bool speed_valid[2] = {};
+  uint8_t status = 0;
+  const uint32_t encoder_m1 = roboclaw.ReadEncM1(address, &status, &encoder_valid[0]);
+  const uint32_t encoder_m2 = roboclaw.ReadEncM2(address, &status, &encoder_valid[1]);
+  const uint32_t speed_m1 = roboclaw.ReadISpeedM1(address, &status, &speed_valid[0]);
+  const uint32_t speed_m2 = roboclaw.ReadISpeedM2(address, &status, &speed_valid[1]);
+
+  const uint32_t encoders[2] = {encoder_m1, encoder_m2};
+  const uint32_t speeds[2] = {speed_m1, speed_m2};
+  for (size_t channel = 0; channel < 2; ++channel) {
+    const size_t wheel = first_wheel + channel;
+    telemetry.encoder_valid[wheel] = encoder_valid[channel];
+    telemetry.speed_valid[wheel] = speed_valid[channel];
+    if (encoder_valid[channel]) {
+      telemetry.encoder_counts[wheel] =
+          apply_direction(static_cast<int32_t>(encoders[channel]),
+                          kMotorMap[wheel].encoder_direction);
+    }
+    if (speed_valid[channel]) {
+      telemetry.measured_qpps[wheel] =
+          apply_direction(static_cast<int32_t>(speeds[channel]),
+                          kMotorMap[wheel].encoder_direction);
+    }
+  }
+
+  controller.error_status = roboclaw.ReadError(address, &controller.error_valid);
+  const bool complete = encoder_valid[0] && encoder_valid[1] && speed_valid[0] &&
+                        speed_valid[1] && controller.error_valid;
+  if (complete) {
+    controller.last_response_ms = now_ms;
+  }
+  controller.healthy =
+      controller.last_response_ms != 0 &&
+      (now_ms - controller.last_response_ms) <= config::kRoboclawHealthTimeoutMs &&
+      (controller.error_status & config::kRoboclawCriticalErrorMask) == 0;
+  return complete;
 }
 
 }  // namespace
 
 void setup_roboclaw_link(SystemState& state) {
-  Serial2.begin(config::kRoboclawBaud);
+  g_front.begin(config::kRoboclawBaud);
+  g_rear.begin(config::kRoboclawBaud);
   delay(config::kRoboclawSetupDelayMs);
 
-  g_roboclaw.begin(config::kRoboclawBaud);
-  delay(config::kRoboclawSetupDelayMs);
-
-  g_last_telemetry_ms = 0;
-  const bool front_ok = probe_address(config::kFrontRoboclawAddress);
-  const bool rear_ok = probe_address(config::kRearRoboclawAddress);
-  const bool battery_ok =
-      config::kBatteryRoboclawAddress == config::kFrontRoboclawAddress ||
-              config::kBatteryRoboclawAddress == config::kRearRoboclawAddress
-          ? true
-          : probe_address(config::kBatteryRoboclawAddress);
-  state.roboclaw_ok = front_ok && rear_ok;
-  state.telemetry.battery_valid = false;
-
-  Serial1.println("DBG,RC,INIT");
-  Serial1.print("DBG,RC,PROBE,0x80,");
-  Serial1.println(front_ok ? "OK" : "FAIL");
-  Serial1.print("DBG,RC,PROBE,0x81,");
-  Serial1.println(rear_ok ? "OK" : "FAIL");
-  Serial1.print("DBG,RC,PROBE,0x82,");
-  Serial1.println(battery_ok ? "OK" : "FAIL");
-
-  for (size_t i = 0; i < kWheelCount; ++i) {
-    state.telemetry.encoder_valid[i] = false;
+  state.front_roboclaw.healthy = probe(g_front, config::kFrontRoboclawAddress);
+  state.rear_roboclaw.healthy = probe(g_rear, config::kRearRoboclawAddress);
+  const uint32_t now_ms = millis();
+  if (state.front_roboclaw.healthy) {
+    state.front_roboclaw.last_response_ms = now_ms;
+  }
+  if (state.rear_roboclaw.healthy) {
+    state.rear_roboclaw.last_response_ms = now_ms;
   }
 }
 
@@ -63,51 +93,17 @@ void update_roboclaw_telemetry(SystemState& state, uint32_t now_ms) {
   }
   g_last_telemetry_ms = now_ms;
 
-  bool any_encoder_valid = false;
-  for (size_t i = 0; i < kWheelCount; ++i) {
-    uint8_t status = 0;
-    bool valid = false;
-    uint32_t raw = 0;
-
-    if (kMotorMap[i].channel_m2) {
-      raw = g_roboclaw.ReadEncM2(kMotorMap[i].address, &status, &valid);
-    } else {
-      raw = g_roboclaw.ReadEncM1(kMotorMap[i].address, &status, &valid);
-    }
-
-    state.telemetry.encoder_valid[i] = valid;
-    if (valid) {
-      state.telemetry.encoder_counts[i] = static_cast<int32_t>(raw);
-      any_encoder_valid = true;
-    }
-  }
+  read_controller(g_front, config::kFrontRoboclawAddress, 0,
+                  state.front_roboclaw, state.telemetry, now_ms);
+  read_controller(g_rear, config::kRearRoboclawAddress, 2,
+                  state.rear_roboclaw, state.telemetry, now_ms);
 
   bool battery_valid = false;
-  uint16_t raw_tenths =
-      g_roboclaw.ReadMainBatteryVoltage(config::kBatteryRoboclawAddress, &battery_valid);
-  if (!battery_valid) {
-    raw_tenths = g_roboclaw.ReadMainBatteryVoltage(config::kFrontRoboclawAddress, &battery_valid);
-  }
-  if (!battery_valid) {
-    raw_tenths = g_roboclaw.ReadMainBatteryVoltage(config::kRearRoboclawAddress, &battery_valid);
-  }
+  const uint16_t raw_tenths =
+      g_rear.ReadMainBatteryVoltage(config::kRearRoboclawAddress, &battery_valid);
+  state.telemetry.battery_valid = battery_valid;
   if (battery_valid) {
     state.telemetry.battery_voltage = static_cast<float>(raw_tenths) / 10.0f;
-    state.telemetry.battery_valid = true;
-  }
-
-  if (any_encoder_valid) {
-    state.roboclaw_ok = true;
-  }
-
-  if ((now_ms - g_last_debug_ms) >= 1000U) {
-    g_last_debug_ms = now_ms;
-    Serial1.print("DBG,RC,TELEM,enc=");
-    Serial1.print(any_encoder_valid ? "1" : "0");
-    Serial1.print(",batt=");
-    Serial1.print(battery_valid ? "1" : "0");
-    Serial1.print(",raw=");
-    Serial1.println(raw_tenths);
   }
 }
 
@@ -117,47 +113,45 @@ void apply_motor_outputs(SystemState& state, uint32_t now_ms) {
   }
   state.last_motor_update_ms = now_ms;
 
-  int16_t fl_duty = apply_direction(
-      state.wheel_outputs.duty[static_cast<size_t>(WheelId::FL)], kMotorMap[0].direction);
-  int16_t fr_duty = apply_direction(
-      state.wheel_outputs.duty[static_cast<size_t>(WheelId::FR)], kMotorMap[1].direction);
-  const int16_t rl_duty = apply_direction(
-      state.wheel_outputs.duty[static_cast<size_t>(WheelId::RL)], kMotorMap[2].direction);
-  const int16_t rr_duty = apply_direction(
-      state.wheel_outputs.duty[static_cast<size_t>(WheelId::RR)], kMotorMap[3].direction);
-
   const int32_t fl_qpps = apply_direction(
-      state.wheel_outputs.qpps[static_cast<size_t>(WheelId::FL)], kMotorMap[0].direction);
+      state.wheel_outputs.qpps[0], kMotorMap[0].command_direction);
   const int32_t fr_qpps = apply_direction(
-      state.wheel_outputs.qpps[static_cast<size_t>(WheelId::FR)], kMotorMap[1].direction);
+      state.wheel_outputs.qpps[1], kMotorMap[1].command_direction);
   const int32_t rl_qpps = apply_direction(
-      state.wheel_outputs.qpps[static_cast<size_t>(WheelId::RL)], kMotorMap[2].direction);
+      state.wheel_outputs.qpps[2], kMotorMap[2].command_direction);
   const int32_t rr_qpps = apply_direction(
-      state.wheel_outputs.qpps[static_cast<size_t>(WheelId::RR)], kMotorMap[3].direction);
+      state.wheel_outputs.qpps[3], kMotorMap[3].command_direction);
 
   bool front_ok = false;
   bool rear_ok = false;
-  if (state.drive_mode == DriveMode::VELOCITY) {
-    front_ok = g_roboclaw.SpeedM1M2(
-        config::kFrontRoboclawAddress,
-        static_cast<uint32_t>(fl_qpps),
-        static_cast<uint32_t>(fr_qpps));
-    rear_ok = g_roboclaw.SpeedM1M2(
-        config::kRearRoboclawAddress,
-        static_cast<uint32_t>(rl_qpps),
-        static_cast<uint32_t>(rr_qpps));
+  if (state.mode == OperatingMode::DUTY_TEST) {
+#if CMCU_ENABLE_DUTY_TEST
+    const int16_t fl = apply_direction(
+        state.wheel_outputs.duty[0], kMotorMap[0].command_direction);
+    const int16_t fr = apply_direction(
+        state.wheel_outputs.duty[1], kMotorMap[1].command_direction);
+    const int16_t rl = apply_direction(
+        state.wheel_outputs.duty[2], kMotorMap[2].command_direction);
+    const int16_t rr = apply_direction(
+        state.wheel_outputs.duty[3], kMotorMap[3].command_direction);
+    front_ok = g_front.DutyM1M2(config::kFrontRoboclawAddress,
+                               static_cast<uint16_t>(fl), static_cast<uint16_t>(fr));
+    rear_ok = g_rear.DutyM1M2(config::kRearRoboclawAddress,
+                             static_cast<uint16_t>(rl), static_cast<uint16_t>(rr));
+#endif
   } else {
-    front_ok = g_roboclaw.DutyM1M2(
-        config::kFrontRoboclawAddress,
-        static_cast<uint16_t>(fl_duty),
-        static_cast<uint16_t>(fr_duty));
-    rear_ok = g_roboclaw.DutyM1M2(
-        config::kRearRoboclawAddress,
-        static_cast<uint16_t>(rl_duty),
-        static_cast<uint16_t>(rr_duty));
+    front_ok = g_front.SpeedM1M2(config::kFrontRoboclawAddress,
+                                static_cast<uint32_t>(fl_qpps),
+                                static_cast<uint32_t>(fr_qpps));
+    rear_ok = g_rear.SpeedM1M2(config::kRearRoboclawAddress,
+                              static_cast<uint32_t>(rl_qpps),
+                              static_cast<uint32_t>(rr_qpps));
   }
 
-  if (!front_ok || !rear_ok) {
-    state.roboclaw_ok = false;
+  if (!front_ok) {
+    state.front_roboclaw.healthy = false;
+  }
+  if (!rear_ok) {
+    state.rear_roboclaw.healthy = false;
   }
 }

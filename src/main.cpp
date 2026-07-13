@@ -3,7 +3,6 @@
 #include "config.h"
 #include "control_logic.h"
 #include "host_link.h"
-#include "radio_link.h"
 #include "roboclaw_link.h"
 #include "system_state.h"
 
@@ -16,18 +15,13 @@ SystemState g_state = {};
 void setup() {
   g_state.startup_ms = millis();
 
-  pinMode(config::kEstopOutPin, OUTPUT);
-  digitalWrite(config::kEstopOutPin, HIGH);
-
   setup_host_link();
-  setup_radio_link();
   setup_roboclaw_link(g_state);
 }
 
 void loop() {
   const uint32_t now_ms = millis();
 
-  update_radio_link(g_state, now_ms);
   update_host_link(g_state, now_ms);
   update_roboclaw_telemetry(g_state, now_ms);
   control_logic::update_state(g_state, now_ms);
