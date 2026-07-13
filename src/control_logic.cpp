@@ -5,143 +5,149 @@
 #include "config.h"
 
 namespace control_logic {
+namespace {
 
-float clamp_norm(float value) {
-  if (value < -1.0f) {
-    return -1.0f;
+float clamp(float value, float limit) {
+  if (value < -limit) {
+    return -limit;
   }
-  if (value > 1.0f) {
-    return 1.0f;
+  if (value > limit) {
+    return limit;
   }
   return value;
 }
 
-float apply_deadband(float value) {
-  value = clamp_norm(value);
-  return fabsf(value) < config::kInputDeadband ? 0.0f : value;
-}
-
-MixedDrive mix_drive(float throttle, float turn) {
-  throttle = apply_deadband(throttle);
-  turn = apply_deadband(turn);
-
-  MixedDrive drive = {};
-  drive.left = throttle - turn;
-  drive.right = throttle + turn;
-
-  const float max_mag = fmaxf(fabsf(drive.left), fabsf(drive.right));
-  if (max_mag > 1.0f) {
-    drive.left /= max_mag;
-    drive.right /= max_mag;
+int32_t clamp_qpps(int32_t value) {
+  if (value < -config::kMaxQpps) {
+    return -config::kMaxQpps;
   }
-
-  return drive;
-}
-
-WheelOutputs build_wheel_outputs(const MixedDrive& drive, DriveMode mode) {
-  WheelOutputs outputs = {};
-
-  const int16_t left_duty =
-      static_cast<int16_t>(lroundf(drive.left * config::kMaxDuty));
-  const int16_t right_duty =
-      static_cast<int16_t>(lroundf(drive.right * config::kMaxDuty));
-  const int32_t left_qpps =
-      static_cast<int32_t>(lroundf(drive.left * config::kMaxQpps));
-  const int32_t right_qpps =
-      static_cast<int32_t>(lroundf(drive.right * config::kMaxQpps));
-
-  outputs.duty[static_cast<size_t>(WheelId::FL)] = left_duty;
-  outputs.duty[static_cast<size_t>(WheelId::FR)] = right_duty;
-  outputs.duty[static_cast<size_t>(WheelId::RL)] = left_duty;
-  outputs.duty[static_cast<size_t>(WheelId::RR)] = right_duty;
-
-  if (mode == DriveMode::VELOCITY) {
-    outputs.qpps[static_cast<size_t>(WheelId::FL)] = left_qpps;
-    outputs.qpps[static_cast<size_t>(WheelId::FR)] = right_qpps;
-    outputs.qpps[static_cast<size_t>(WheelId::RL)] = left_qpps;
-    outputs.qpps[static_cast<size_t>(WheelId::RR)] = right_qpps;
+  if (value > config::kMaxQpps) {
+    return config::kMaxQpps;
   }
-
-  return outputs;
+  return value;
 }
 
-static MotionCommand select_active_command(const SystemState& state) {
-  switch (state.mode) {
-    case OperatingMode::JOYSTICK: {
-      MotionCommand motion = state.radio.joystick_command;
-      motion.throttle = -motion.throttle;
-      return motion;
-    }
-    case OperatingMode::KEYBOARD:
-      return state.host.keyboard_command;
-    case OperatingMode::AUTONOMOUS:
-      return state.host.autonomous_command;
-    case OperatingMode::SAFE:
-    default:
-      return {};
+int32_t slew(int32_t current, int32_t desired, int32_t max_change) {
+  if (desired > current + max_change) {
+    return current + max_change;
   }
+  if (desired < current - max_change) {
+    return current - max_change;
+  }
+  return desired;
 }
 
-static OperatingMode select_operating_mode(const SystemState& state) {
-  return state.host.selected_mode;
-}
-
-static FaultCode compute_fault(const SystemState& state, uint32_t now_ms) {
+FaultCode compute_fault(const SystemState& state, uint32_t now_ms) {
   if ((now_ms - state.startup_ms) < config::kStartupLockoutMs) {
     return FaultCode::STARTUP;
   }
-  if (!state.roboclaw_ok) {
+  if (!state.front_roboclaw.healthy || !state.rear_roboclaw.healthy) {
     return FaultCode::ROBOCLAW;
   }
-  if (state.telemetry.battery_valid &&
+  if (!state.telemetry.battery_valid ||
       state.telemetry.battery_voltage < config::kBatteryCriticalVolts) {
     return FaultCode::BATTERY;
   }
-  if (state.mode == OperatingMode::JOYSTICK) {
-    if (!state.radio.linked) {
-      return FaultCode::RADIO_TIMEOUT;
-    }
-    if (state.radio.estop) {
-      return FaultCode::ESTOP;
-    }
-    if (!state.radio.joystick_command.valid ||
-        state.radio.joystick_command.received_ms == 0U) {
-      return FaultCode::RADIO_TIMEOUT;
-    }
-    return FaultCode::OK;
+  if (!state.host.handshake_complete) {
+    return FaultCode::HOST_TIMEOUT;
   }
-  if (state.mode == OperatingMode::KEYBOARD || state.mode == OperatingMode::AUTONOMOUS) {
-    if (!state.host.handshake_complete) {
-      return FaultCode::HOST_TIMEOUT;
-    }
-    if (state.active_command.estop) {
-      return FaultCode::ESTOP;
-    }
-    if (!state.active_command.valid ||
-        (now_ms - state.active_command.received_ms) > config::kHostTimeoutMs) {
-      return FaultCode::HOST_TIMEOUT;
-    }
-    return FaultCode::OK;
+
+  const uint32_t received_ms = state.host.requested_mode == OperatingMode::DUTY_TEST
+                                   ? state.host.duty_test_command.received_ms
+                                   : state.host.velocity_command.received_ms;
+  const bool valid = state.host.requested_mode == OperatingMode::DUTY_TEST
+                         ? state.host.duty_test_command.valid
+                         : state.host.velocity_command.valid;
+  if (!valid || (now_ms - received_ms) > config::kHostTimeoutMs) {
+    return FaultCode::HOST_TIMEOUT;
   }
   return FaultCode::OK;
 }
 
-void update_state(SystemState& state, uint32_t now_ms) {
-  state.mode = select_operating_mode(state);
-  state.drive_mode = state.host.requested_drive_mode;
-  state.active_command = select_active_command(state);
-  state.fault = compute_fault(state, now_ms);
+}  // namespace
 
+WheelOutputs body_velocity_targets(const MotionCommand& command) {
+  const float linear = clamp(command.linear_mps, config::kMaxLinearMps);
+  const float angular = clamp(command.angular_radps, config::kMaxAngularRadps);
+  const float left_mps = linear - angular * config::kEffectiveTrackWidthMeters * 0.5f;
+  const float right_mps = linear + angular * config::kEffectiveTrackWidthMeters * 0.5f;
+  const float qpps_per_mps = config::kEncoderCountsPerWheelRevolution /
+                             (2.0f * static_cast<float>(M_PI) *
+                              config::kWheelRadiusMeters);
+
+  float left_qpps = left_mps * qpps_per_mps;
+  float right_qpps = right_mps * qpps_per_mps;
+  const float largest = fmaxf(fabsf(left_qpps), fabsf(right_qpps));
+  if (largest > static_cast<float>(config::kMaxQpps)) {
+    const float scale = static_cast<float>(config::kMaxQpps) / largest;
+    left_qpps *= scale;
+    right_qpps *= scale;
+  }
+
+  WheelOutputs outputs = {};
+  const int32_t left = clamp_qpps(static_cast<int32_t>(lroundf(left_qpps)));
+  const int32_t right = clamp_qpps(static_cast<int32_t>(lroundf(right_qpps)));
+  outputs.qpps[static_cast<size_t>(WheelId::FL)] = left;
+  outputs.qpps[static_cast<size_t>(WheelId::FR)] = right;
+  outputs.qpps[static_cast<size_t>(WheelId::RL)] = left;
+  outputs.qpps[static_cast<size_t>(WheelId::RR)] = right;
+  return outputs;
+}
+
+WheelOutputs slew_velocity_targets(const WheelOutputs& current,
+                                    const WheelOutputs& desired,
+                                    uint32_t elapsed_ms) {
+  WheelOutputs outputs = desired;
+  int32_t max_change = static_cast<int32_t>(
+      (static_cast<int64_t>(config::kMaxQppsChangePerSecond) * elapsed_ms) / 1000);
+  if (max_change < 1) {
+    max_change = 1;
+  }
+  for (size_t i = 0; i < kWheelCount; ++i) {
+    outputs.qpps[i] = slew(current.qpps[i], desired.qpps[i], max_change);
+  }
+  return outputs;
+}
+
+WheelOutputs duty_test_targets(const DutyTestCommand& command) {
+  WheelOutputs outputs = {};
+  for (size_t i = 0; i < kWheelCount; ++i) {
+    const float normalized = clamp(command.duty[i], 1.0f);
+    outputs.duty[i] = static_cast<int16_t>(
+        lroundf(normalized * static_cast<float>(config::kMaxDebugDuty)));
+  }
+  return outputs;
+}
+
+void update_state(SystemState& state, uint32_t now_ms) {
+  state.fault = compute_fault(state, now_ms);
   if (state.fault != FaultCode::OK) {
-    state.mode = OperatingMode::SAFE;
-    state.active_command = {};
-    state.mixed_drive = {};
+    state.mode = OperatingMode::FAULT;
     state.wheel_outputs = {};
+    state.last_control_update_ms = now_ms;
     return;
   }
 
-  state.mixed_drive = mix_drive(state.active_command.throttle, state.active_command.turn);
-  state.wheel_outputs = build_wheel_outputs(state.mixed_drive, state.drive_mode);
+  const uint32_t elapsed_ms = state.last_control_update_ms == 0
+                                  ? config::kMotorUpdatePeriodMs
+                                  : now_ms - state.last_control_update_ms;
+  state.last_control_update_ms = now_ms;
+
+  if (state.host.requested_mode == OperatingMode::DUTY_TEST) {
+#if CMCU_ENABLE_DUTY_TEST
+    state.mode = OperatingMode::DUTY_TEST;
+    state.wheel_outputs = duty_test_targets(state.host.duty_test_command);
+#else
+    state.mode = OperatingMode::FAULT;
+    state.fault = FaultCode::HOST_TIMEOUT;
+    state.wheel_outputs = {};
+#endif
+    return;
+  }
+
+  state.mode = OperatingMode::BODY_VELOCITY;
+  const WheelOutputs desired = body_velocity_targets(state.host.velocity_command);
+  state.wheel_outputs = slew_velocity_targets(state.wheel_outputs, desired, elapsed_ms);
 }
 
 }  // namespace control_logic

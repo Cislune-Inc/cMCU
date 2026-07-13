@@ -1,38 +1,40 @@
 #include <Arduino.h>
 
+#include "RoboClaw.h"
+#include "board_pins.h"
 #include "config.h"
-#include "control_logic.h"
-#include "host_link.h"
-#include "radio_link.h"
-#include "roboclaw_link.h"
 #include "system_state.h"
 
 namespace {
 
-SystemState g_state = {};
+// Start with the rover's wheels off the ground. Increase only after confirming
+// that the motor wiring and direction signs are correct.
+constexpr int32_t kTestQpps = 500;
+
+RoboClaw g_front_roboclaw(&board::front_roboclaw_uart,
+                          config::kRoboclawTimeoutUs);
+RoboClaw g_rear_roboclaw(&board::rear_roboclaw_uart,
+                         config::kRoboclawTimeoutUs);
 
 }  // namespace
 
 void setup() {
-  g_state.startup_ms = millis();
-
-  pinMode(config::kEstopOutPin, OUTPUT);
-  digitalWrite(config::kEstopOutPin, HIGH);
-
-  setup_host_link();
-  setup_radio_link();
-  setup_roboclaw_link(g_state);
+  g_front_roboclaw.begin(config::kRoboclawBaud);
+  g_rear_roboclaw.begin(config::kRoboclawBaud);
+  delay(config::kRoboclawSetupDelayMs);
 }
 
 void loop() {
-  const uint32_t now_ms = millis();
+  const int32_t fl_qpps = kTestQpps * kMotorMap[0].command_direction;
+  const int32_t fr_qpps = kTestQpps * kMotorMap[1].command_direction;
+  const int32_t rl_qpps = kTestQpps * kMotorMap[2].command_direction;
+  const int32_t rr_qpps = kTestQpps * kMotorMap[3].command_direction;
 
-  update_radio_link(g_state, now_ms);
-  update_host_link(g_state, now_ms);
-  update_roboclaw_telemetry(g_state, now_ms);
-  control_logic::update_state(g_state, now_ms);
-  apply_motor_outputs(g_state, now_ms);
-  send_telemetry(g_state, now_ms);
-
-  delay(config::kLoopDelayMs);
+  g_front_roboclaw.SpeedM1M2(config::kFrontRoboclawAddress,
+                             static_cast<uint32_t>(fl_qpps),
+                             static_cast<uint32_t>(fr_qpps));
+  g_rear_roboclaw.SpeedM1M2(config::kRearRoboclawAddress,
+                            static_cast<uint32_t>(rl_qpps),
+                            static_cast<uint32_t>(rr_qpps));
+  delay(config::kMotorUpdatePeriodMs);
 }

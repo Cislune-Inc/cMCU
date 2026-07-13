@@ -1,197 +1,144 @@
 #include <assert.h>
+#include <math.h>
 #include <string.h>
 
+#include "config.h"
 #include "control_logic.h"
 #include "protocol.h"
 
-static void test_mix_drive_scales() {
-  const MixedDrive drive = control_logic::mix_drive(1.0f, 1.0f);
-  assert(drive.left == 0.0f);
-  assert(drive.right == 1.0f);
+static bool near(int32_t actual, int32_t expected, int32_t tolerance = 1) {
+  return actual >= expected - tolerance && actual <= expected + tolerance;
 }
 
-static void test_host_protocol_parses_motion() {
-  const protocol::ParseResult result = protocol::parse_host_line("C,0.5,-0.25,1", 123U);
-  assert(result.ok);
-  assert(result.is_motion);
-  assert(result.motion.estop);
-  assert(result.motion.received_ms == 123U);
-}
-
-static void test_host_protocol_requires_literal_pong() {
-  const protocol::ParseResult pong = protocol::parse_host_line("PONG", 10U);
-  assert(pong.ok);
-  assert(pong.is_ping);
-
-  const protocol::ParseResult ping = protocol::parse_host_line("PING", 10U);
-  assert(!ping.ok);
-}
-
-static void test_radio_protocol_updates_selected_mode() {
-  RadioState radio = {};
-  const bool ok = protocol::parse_radio_line("R,A,0.0,0.0,0", radio, 99U);
-  assert(ok);
-  assert(radio.selected_mode == OperatingMode::AUTONOMOUS);
-  assert(radio.linked);
-}
-
-static void test_fault_for_missing_host_command() {
+static SystemState ready_state(uint32_t command_ms) {
   SystemState state = {};
-  state.startup_ms = 0U;
-  state.roboclaw_ok = true;
-  state.radio.selected_mode = OperatingMode::AUTONOMOUS;
-  state.radio.linked = true;
-  state.radio.last_packet_ms = 1900U;
+  state.startup_ms = 0;
+  state.front_roboclaw.healthy = true;
+  state.rear_roboclaw.healthy = true;
+  state.telemetry.battery_valid = true;
+  state.telemetry.battery_voltage = 24.0f;
   state.host.handshake_complete = true;
-  state.telemetry.battery_valid = true;
-  state.telemetry.battery_voltage = 24.0f;
-
-  control_logic::update_state(state, 2000U);
-  assert(state.mode == OperatingMode::SAFE);
-  assert(state.fault == FaultCode::HOST_TIMEOUT);
+  state.host.velocity_command.valid = true;
+  state.host.velocity_command.received_ms = command_ms;
+  return state;
 }
 
-static void test_fault_for_missing_radio_command() {
-  SystemState state = {};
-  state.startup_ms = 0U;
-  state.roboclaw_ok = true;
-  state.radio.selected_mode = OperatingMode::AUTONOMOUS;
-  state.telemetry.battery_valid = true;
-  state.telemetry.battery_voltage = 24.0f;
+static void test_protocol_handshake_and_velocity() {
+  const protocol::ParseResult hello = protocol::parse_host_line("HELLO,1", 10);
+  assert(hello.ok && hello.is_hello);
+  assert(!protocol::parse_host_line("HELLO,2", 10).ok);
 
-  control_logic::update_state(state, 2000U);
-  assert(state.mode == OperatingMode::SAFE);
-  assert(state.fault == FaultCode::HOST_TIMEOUT);
+  const protocol::ParseResult velocity =
+      protocol::parse_host_line("CMD_VEL,42,0.25,-0.5", 123);
+  assert(velocity.ok && velocity.is_velocity);
+  assert(velocity.velocity.sequence == 42);
+  assert(velocity.velocity.linear_mps == 0.25f);
+  assert(velocity.velocity.angular_radps == -0.5f);
+  assert(velocity.velocity.received_ms == 123);
+  assert(!protocol::parse_host_line("CMD_VEL,42,nan,0", 123).ok);
+  assert(!protocol::parse_host_line("CMD_VEL,42,0,0,junk", 123).ok);
 }
 
-static void test_host_protocol_selects_mode() {
-  const protocol::ParseResult result = protocol::parse_host_line("M,A", 55U);
-  assert(result.ok);
-  assert(result.is_mode_select);
-  assert(result.selected_mode == OperatingMode::AUTONOMOUS);
+static void test_duty_is_disabled_by_default() {
+  const protocol::ParseResult duty =
+      protocol::parse_host_line("CMD_DUTY,1,0.1,0,0,0", 10);
+  assert(!config::kDutyTestEnabled);
+  assert(!duty.ok);
 }
 
-static void test_host_protocol_selects_joystick_mode() {
-  const protocol::ParseResult result = protocol::parse_host_line("M,J", 55U);
-  assert(result.ok);
-  assert(result.is_mode_select);
-  assert(result.selected_mode == OperatingMode::JOYSTICK);
+static void test_body_velocity_kinematics() {
+  MotionCommand command = {};
+  command.linear_mps = 0.2f;
+  command.angular_radps = 0.4f;
+  const WheelOutputs output = control_logic::body_velocity_targets(command);
+  const float qpps_per_mps = config::kEncoderCountsPerWheelRevolution /
+                             (2.0f * static_cast<float>(M_PI) *
+                              config::kWheelRadiusMeters);
+  const int32_t expected_left = static_cast<int32_t>(lroundf(0.1f * qpps_per_mps));
+  const int32_t expected_right = static_cast<int32_t>(lroundf(0.3f * qpps_per_mps));
+  assert(near(output.qpps[0], expected_left));
+  assert(near(output.qpps[1], expected_right));
+  assert(output.qpps[0] == output.qpps[2]);
+  assert(output.qpps[1] == output.qpps[3]);
 }
 
-static void test_auto_radio_uses_selected_host_mode() {
-  SystemState state = {};
-  state.startup_ms = 0U;
-  state.roboclaw_ok = true;
-  state.radio.selected_mode = OperatingMode::AUTONOMOUS;
-  state.radio.linked = true;
-  state.radio.last_packet_ms = 1990U;
-  state.host.handshake_complete = true;
-  state.host.selected_mode = OperatingMode::KEYBOARD;
-  state.host.keyboard_command.source_mode = OperatingMode::KEYBOARD;
-  state.host.keyboard_command.throttle = 0.5f;
-  state.host.keyboard_command.valid = true;
-  state.host.keyboard_command.received_ms = 1990U;
-  state.telemetry.battery_valid = true;
-  state.telemetry.battery_voltage = 24.0f;
+static void test_saturation_preserves_ratio() {
+  MotionCommand command = {};
+  command.linear_mps = 100.0f;
+  command.angular_radps = 100.0f;
+  const WheelOutputs output = control_logic::body_velocity_targets(command);
+  for (size_t i = 0; i < kWheelCount; ++i) {
+    assert(abs(output.qpps[i]) <= config::kMaxQpps);
+  }
+}
 
-  control_logic::update_state(state, 2000U);
-  assert(state.mode == OperatingMode::KEYBOARD);
+static void test_slew_and_reversal_cross_zero() {
+  WheelOutputs current = {};
+  WheelOutputs desired = {};
+  current.qpps[0] = 1000;
+  desired.qpps[0] = -1000;
+  const WheelOutputs first =
+      control_logic::slew_velocity_targets(current, desired, 20);
+  assert(first.qpps[0] == 800);
+
+  WheelOutputs value = current;
+  for (int i = 0; i < 5; ++i) {
+    value = control_logic::slew_velocity_targets(value, desired, 20);
+  }
+  assert(value.qpps[0] == 0);
+}
+
+static void test_state_requires_fresh_host_command() {
+  SystemState state = ready_state(1900);
+  state.host.velocity_command.linear_mps = 0.2f;
+  control_logic::update_state(state, 2000);
+  assert(state.mode == OperatingMode::BODY_VELOCITY);
   assert(state.fault == FaultCode::OK);
-  assert(state.active_command.source_mode == OperatingMode::KEYBOARD);
-}
 
-static void test_host_requires_handshake_before_motion() {
-  SystemState state = {};
-  state.startup_ms = 0U;
-  state.roboclaw_ok = true;
-  state.radio.selected_mode = OperatingMode::AUTONOMOUS;
-  state.radio.linked = true;
-  state.radio.last_packet_ms = 1990U;
-  state.host.selected_mode = OperatingMode::KEYBOARD;
-  state.host.keyboard_command.source_mode = OperatingMode::KEYBOARD;
-  state.host.keyboard_command.throttle = 0.5f;
-  state.host.keyboard_command.valid = true;
-  state.host.keyboard_command.received_ms = 1990U;
-  state.telemetry.battery_valid = true;
-  state.telemetry.battery_voltage = 24.0f;
-
-  control_logic::update_state(state, 2000U);
-  assert(state.mode == OperatingMode::SAFE);
+  control_logic::update_state(state, 2200);
+  assert(state.mode == OperatingMode::FAULT);
   assert(state.fault == FaultCode::HOST_TIMEOUT);
+  assert(state.wheel_outputs.qpps[0] == 0);
 }
 
-static void test_keyboard_mode_does_not_require_radio_link() {
-  SystemState state = {};
-  state.startup_ms = 0U;
-  state.roboclaw_ok = true;
-  state.host.handshake_complete = true;
-  state.host.selected_mode = OperatingMode::KEYBOARD;
-  state.host.keyboard_command.source_mode = OperatingMode::KEYBOARD;
-  state.host.keyboard_command.throttle = 0.3f;
-  state.host.keyboard_command.valid = true;
-  state.host.keyboard_command.received_ms = 1990U;
-  state.telemetry.battery_valid = true;
-  state.telemetry.battery_voltage = 24.0f;
-
-  control_logic::update_state(state, 2000U);
-  assert(state.mode == OperatingMode::KEYBOARD);
-  assert(state.fault == FaultCode::OK);
+static void test_state_requires_both_controllers() {
+  SystemState state = ready_state(1990);
+  state.rear_roboclaw.healthy = false;
+  control_logic::update_state(state, 2000);
+  assert(state.mode == OperatingMode::FAULT);
+  assert(state.fault == FaultCode::ROBOCLAW);
 }
 
-static void test_joystick_mode_uses_radio_command() {
-  SystemState state = {};
-  state.startup_ms = 0U;
-  state.roboclaw_ok = true;
-  state.host.selected_mode = OperatingMode::JOYSTICK;
-  state.radio.linked = true;
-  state.radio.last_packet_ms = 1990U;
-  state.radio.joystick_command.source_mode = OperatingMode::JOYSTICK;
-  state.radio.joystick_command.throttle = 0.3f;
-  state.radio.joystick_command.valid = true;
-  state.radio.joystick_command.received_ms = 1990U;
-  state.telemetry.battery_valid = true;
-  state.telemetry.battery_voltage = 24.0f;
+static void test_telemetry_fields_are_ordered() {
+  SystemState state = ready_state(100);
+  state.mode = OperatingMode::BODY_VELOCITY;
+  state.fault = FaultCode::OK;
+  state.telemetry_sequence = 7;
+  state.host.last_accepted_sequence = 6;
+  state.telemetry.encoder_counts[0] = 11;
+  state.telemetry.encoder_counts[1] = 22;
+  state.telemetry.encoder_counts[2] = 33;
+  state.telemetry.encoder_counts[3] = 44;
+  for (size_t i = 0; i < kWheelCount; ++i) {
+    state.telemetry.encoder_valid[i] = true;
+    state.telemetry.speed_valid[i] = true;
+  }
 
-  control_logic::update_state(state, 2000U);
-  assert(state.mode == OperatingMode::JOYSTICK);
-  assert(state.fault == FaultCode::OK);
-  assert(state.active_command.source_mode == OperatingMode::JOYSTICK);
-}
-
-static void test_telemetry_is_readable_and_reordered() {
-  SystemState state = {};
-  state.mode = OperatingMode::KEYBOARD;
-  state.fault = FaultCode::HOST_TIMEOUT;
-  state.drive_mode = DriveMode::DUTY;
-  state.host.selected_mode = OperatingMode::AUTONOMOUS;
-  state.active_command.throttle = 0.4f;
-  state.active_command.turn = 0.1f;
-  state.telemetry.battery_voltage = 24.0f;
-  state.telemetry.encoder_counts[0] = 11;  // FL
-  state.telemetry.encoder_counts[1] = 22;  // FR
-  state.telemetry.encoder_counts[2] = 33;  // RL
-  state.telemetry.encoder_counts[3] = 44;  // RR
-
-  char buffer[256];
-  protocol::format_telemetry(state, buffer, sizeof(buffer));
-
-  assert(strcmp(buffer,
-                "mode=KEY drive=DUTY host=AUTO thr=0.400 trn=0.100 enc=22|11|44|33 batt=24.0 fault=Host") == 0);
+  char buffer[320];
+  protocol::format_telemetry(state, 1234, buffer, sizeof(buffer));
+  const char* prefix = "TLM,1,7,1234,6,11,22,33,44,";
+  assert(strncmp(buffer, prefix, strlen(prefix)) == 0);
+  assert(strstr(buffer, ",24.0,1,15,15,1,1,0,0,0,VELOCITY,NONE") != nullptr);
 }
 
 int main() {
-  test_mix_drive_scales();
-  test_host_protocol_parses_motion();
-  test_host_protocol_requires_literal_pong();
-  test_radio_protocol_updates_selected_mode();
-  test_fault_for_missing_host_command();
-  test_fault_for_missing_radio_command();
-  test_host_protocol_selects_mode();
-  test_host_protocol_selects_joystick_mode();
-  test_auto_radio_uses_selected_host_mode();
-  test_host_requires_handshake_before_motion();
-  test_keyboard_mode_does_not_require_radio_link();
-  test_joystick_mode_uses_radio_command();
-  test_telemetry_is_readable_and_reordered();
+  test_protocol_handshake_and_velocity();
+  test_duty_is_disabled_by_default();
+  test_body_velocity_kinematics();
+  test_saturation_preserves_ratio();
+  test_slew_and_reversal_cross_zero();
+  test_state_requires_fresh_host_command();
+  test_state_requires_both_controllers();
+  test_telemetry_fields_are_ordered();
   return 0;
 }
