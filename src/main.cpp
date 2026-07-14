@@ -9,7 +9,12 @@ namespace {
 
 // Start with the rover's wheels off the ground. Increase only after confirming
 // that the motor wiring and direction signs are correct.
-constexpr int32_t kTestQpps = 500;
+constexpr int32_t kTestQpps[kWheelCount] = {
+    500,  // FL
+    500,  // FR
+    400,  // RL: reduced for initial wheel-speed matching
+    500,  // RR
+};
 
 RoboClaw g_front_roboclaw(&board::front_roboclaw_uart,
                           config::kRoboclawTimeoutUs);
@@ -25,10 +30,10 @@ void setup() {
 }
 
 void loop() {
-  const int32_t fl_qpps = kTestQpps * kMotorMap[0].command_direction;
-  const int32_t fr_qpps = kTestQpps * kMotorMap[1].command_direction;
-  const int32_t rl_qpps = kTestQpps * kMotorMap[2].command_direction;
-  const int32_t rr_qpps = kTestQpps * kMotorMap[3].command_direction;
+  const int32_t fl_qpps = kTestQpps[0] * kMotorMap[0].command_direction;
+  const int32_t fr_qpps = kTestQpps[1] * kMotorMap[1].command_direction;
+  const int32_t rl_qpps = kTestQpps[2] * kMotorMap[2].command_direction;
+  const int32_t rr_qpps = kTestQpps[3] * kMotorMap[3].command_direction;
 
   g_front_roboclaw.SpeedM1M2(config::kFrontRoboclawAddress,
                              static_cast<uint32_t>(fl_qpps),

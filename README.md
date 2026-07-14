@@ -3,8 +3,9 @@
 ## `test` branch
 
 This branch replaces the normal `main.cpp` with a direct RoboClaw bring-up
-program. It continuously commands all four mapped motors at `kTestQpps = 500`
-and does not wait for Jetson, ROS, or host-link commands. Keep the wheels off
+program. It continuously commands the mapped motors using the per-wheel
+`kTestQpps` values in `src/main.cpp` and does not wait for Jetson, ROS, or
+host-link commands. Keep the wheels off
 the ground and remove motor power to stop it.
 
 Teensy 4.0 firmware for a four-wheel skid-steer rover. The Jetson sends one
