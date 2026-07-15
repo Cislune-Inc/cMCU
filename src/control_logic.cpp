@@ -44,6 +44,12 @@ FaultCode compute_fault(const SystemState& state, uint32_t now_ms) {
   if (!state.front_roboclaw.healthy || !state.rear_roboclaw.healthy) {
     return FaultCode::ROBOCLAW;
   }
+  for (size_t wheel = 0; wheel < kWheelCount; ++wheel) {
+    if (!state.telemetry.encoder_valid[wheel] ||
+        !state.telemetry.speed_valid[wheel]) {
+      return FaultCode::FEEDBACK;
+    }
+  }
   if (!state.telemetry.battery_valid ||
       state.telemetry.battery_voltage < config::kBatteryCriticalVolts) {
     return FaultCode::BATTERY;
@@ -52,13 +58,9 @@ FaultCode compute_fault(const SystemState& state, uint32_t now_ms) {
     return FaultCode::HOST_TIMEOUT;
   }
 
-  const uint32_t received_ms = state.host.requested_mode == OperatingMode::DUTY_TEST
-                                   ? state.host.duty_test_command.received_ms
-                                   : state.host.velocity_command.received_ms;
-  const bool valid = state.host.requested_mode == OperatingMode::DUTY_TEST
-                         ? state.host.duty_test_command.valid
-                         : state.host.velocity_command.valid;
-  if (!valid || (now_ms - received_ms) > config::kHostTimeoutMs) {
+  if (!state.host.velocity_command.valid ||
+      (now_ms - state.host.velocity_command.received_ms) >
+          config::kHostTimeoutMs) {
     return FaultCode::HOST_TIMEOUT;
   }
   return FaultCode::OK;
@@ -109,16 +111,6 @@ WheelOutputs slew_velocity_targets(const WheelOutputs& current,
   return outputs;
 }
 
-WheelOutputs duty_test_targets(const DutyTestCommand& command) {
-  WheelOutputs outputs = {};
-  for (size_t i = 0; i < kWheelCount; ++i) {
-    const float normalized = clamp(command.duty[i], 1.0f);
-    outputs.duty[i] = static_cast<int16_t>(
-        lroundf(normalized * static_cast<float>(config::kMaxDebugDuty)));
-  }
-  return outputs;
-}
-
 void update_state(SystemState& state, uint32_t now_ms) {
   state.fault = compute_fault(state, now_ms);
   if (state.fault != FaultCode::OK) {
@@ -132,18 +124,6 @@ void update_state(SystemState& state, uint32_t now_ms) {
                                   ? config::kMotorUpdatePeriodMs
                                   : now_ms - state.last_control_update_ms;
   state.last_control_update_ms = now_ms;
-
-  if (state.host.requested_mode == OperatingMode::DUTY_TEST) {
-#if CMCU_ENABLE_DUTY_TEST
-    state.mode = OperatingMode::DUTY_TEST;
-    state.wheel_outputs = duty_test_targets(state.host.duty_test_command);
-#else
-    state.mode = OperatingMode::FAULT;
-    state.fault = FaultCode::HOST_TIMEOUT;
-    state.wheel_outputs = {};
-#endif
-    return;
-  }
 
   state.mode = OperatingMode::BODY_VELOCITY;
   const WheelOutputs desired = body_velocity_targets(state.host.velocity_command);

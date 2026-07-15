@@ -49,13 +49,13 @@ def main() -> int:
                 if key == "h":
                     print("\r" + HELP)
                 elif key == "w":
-                    linear, angular = 0.2, 0.0
+                    linear, angular = 0.15, 0.0
                 elif key == "s":
-                    linear, angular = -0.2, 0.0
+                    linear, angular = -0.15, 0.0
                 elif key == "a":
-                    linear, angular = 0.0, 0.5
+                    linear, angular = 0.0, 0.4
                 elif key == "d":
-                    linear, angular = 0.0, -0.5
+                    linear, angular = 0.0, -0.4
                 elif key == " ":
                     linear, angular = 0.0, 0.0
 

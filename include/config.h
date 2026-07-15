@@ -2,10 +2,6 @@
 
 #include <stdint.h>
 
-#ifndef CMCU_ENABLE_DUTY_TEST
-#define CMCU_ENABLE_DUTY_TEST 0
-#endif
-
 namespace config {
 
 constexpr uint32_t kProtocolVersion = 1;
@@ -23,18 +19,17 @@ constexpr uint32_t kRoboclawHealthTimeoutMs = 250;
 constexpr uint32_t kStartupLockoutMs = 1000;
 
 constexpr float kBatteryCriticalVolts = 18.8f;
-constexpr int16_t kMaxDebugDuty = 4096;
 constexpr int32_t kMaxQpps = 4000;
 constexpr int32_t kMaxQppsChangePerSecond = 10000;
-constexpr float kMaxLinearMps = 0.5f;
-constexpr float kMaxAngularRadps = 1.0f;
+constexpr float kMaxLinearMps = 0.15f;
+constexpr float kMaxAngularRadps = 0.4f;
 
-// Provisional values. Measure the rover before a ground test.
-constexpr float kWheelRadiusMeters = 0.10f;
-constexpr float kEffectiveTrackWidthMeters = 0.50f;
-constexpr float kEncoderCountsPerWheelRevolution = 1000.0f;
+// Small-rover baselines recovered from carve_ws. Measure and update these,
+// kMaxQpps, the slew limit, and kMotorMap before the first ground test.
+constexpr float kWheelRadiusMeters = 0.09f;
+constexpr float kEffectiveTrackWidthMeters = 0.108f;
+constexpr float kEncoderCountsPerWheelRevolution = 36200.0f;
 
-constexpr bool kDutyTestEnabled = CMCU_ENABLE_DUTY_TEST != 0;
 constexpr uint32_t kRoboclawCriticalErrorMask = 0x000FFF;
 
 constexpr uint8_t kFrontRoboclawAddress = 0x80;

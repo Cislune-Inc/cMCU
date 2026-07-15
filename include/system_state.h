@@ -7,7 +7,6 @@
 enum class OperatingMode : uint8_t {
   DISABLED = 'D',
   BODY_VELOCITY = 'V',
-  DUTY_TEST = 'T',
   FAULT = 'F',
 };
 
@@ -17,6 +16,7 @@ enum class FaultCode : uint8_t {
   HOST_TIMEOUT = 'H',
   BATTERY = 'T',
   ROBOCLAW = 'C',
+  FEEDBACK = 'E',
 };
 
 enum class WheelId : uint8_t {
@@ -34,24 +34,14 @@ struct MotionCommand {
   bool valid = false;
 };
 
-struct DutyTestCommand {
-  float duty[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-  uint32_t sequence = 0;
-  uint32_t received_ms = 0;
-  bool valid = false;
-};
-
 struct HostState {
   MotionCommand velocity_command = {};
-  DutyTestCommand duty_test_command = {};
-  OperatingMode requested_mode = OperatingMode::BODY_VELOCITY;
   uint32_t last_accepted_sequence = 0;
   bool has_accepted_sequence = false;
   bool handshake_complete = false;
 };
 
 struct WheelOutputs {
-  int16_t duty[4] = {0, 0, 0, 0};
   int32_t qpps[4] = {0, 0, 0, 0};
 };
 

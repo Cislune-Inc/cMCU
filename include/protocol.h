@@ -10,9 +10,7 @@ struct ParseResult {
   bool ok = false;
   bool is_hello = false;
   bool is_velocity = false;
-  bool is_duty_test = false;
   MotionCommand velocity = {};
-  DutyTestCommand duty_test = {};
 };
 
 ParseResult parse_host_line(const char* line, uint32_t now_ms);

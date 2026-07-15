@@ -33,7 +33,6 @@ void handle_line(SystemState& state, const char* line, uint32_t now_ms) {
     state.host.handshake_complete = true;
     state.host.has_accepted_sequence = false;
     state.host.velocity_command = {};
-    state.host.duty_test_command = {};
     board::host_uart.print("ACK,HELLO,");
     board::host_uart.println(config::kProtocolVersion);
     return;
@@ -44,26 +43,18 @@ void handle_line(SystemState& state, const char* line, uint32_t now_ms) {
     return;
   }
 
-  const uint32_t sequence = result.is_velocity
-                                ? result.velocity.sequence
-                                : result.duty_test.sequence;
+  if (!result.is_velocity) {
+    board::host_uart.println("ERR,INVALID");
+    return;
+  }
+
+  const uint32_t sequence = result.velocity.sequence;
   if (!sequence_is_newer(sequence, state.host)) {
     board::host_uart.println("ERR,SEQUENCE");
     return;
   }
 
-  if (result.is_velocity) {
-    state.host.velocity_command = result.velocity;
-    state.host.requested_mode = OperatingMode::BODY_VELOCITY;
-  } else if (result.is_duty_test) {
-#if CMCU_ENABLE_DUTY_TEST
-    state.host.duty_test_command = result.duty_test;
-    state.host.requested_mode = OperatingMode::DUTY_TEST;
-#else
-    board::host_uart.println("ERR,DUTY_DISABLED");
-    return;
-#endif
-  }
+  state.host.velocity_command = result.velocity;
 
   accept_sequence(state.host, sequence);
   board::host_uart.print("ACK,CMD,");

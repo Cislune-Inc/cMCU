@@ -59,9 +59,10 @@ TLM,<version>,<tlm_seq>,<mcu_ms>,<last_cmd_seq>,
 The actual packet is one line without spaces. Encoder and speed validity use
 bits 0..3 for FL, FR, RL, and RR.
 
-## Required calibration
+## Required calibration and RoboClaw setup
 
-Before a ground test, replace the provisional values in `include/config.h`:
+The checked-in geometry values are historical small-rover baselines, not a
+completed calibration. Before a ground test, measure and update:
 
 - `kWheelRadiusMeters`
 - `kEffectiveTrackWidthMeters`
@@ -71,18 +72,9 @@ Before a ground test, replace the provisional values in `include/config.h`:
 Independent command and encoder direction corrections are in `kMotorMap` in
 `include/system_state.h`.
 
-## Duty-cycle debugging
-
-Normal builds do not compile in a duty command. For a wheels-off-ground
-commissioning build only, add `-DCMCU_ENABLE_DUTY_TEST=1` to `build_flags`.
-That enables:
-
-```text
-CMD_DUTY,<sequence>,<fl>,<fr>,<rl>,<rr>
-```
-
-Each value is clamped to `[-1, 1]` and then limited by `kMaxDebugDuty`. Remove
-the build flag before normal operation.
+Configure and tune both RoboClaws for closed-loop encoder velocity control.
+The production host protocol intentionally has no duty-cycle command. Motion
+is inhibited unless encoder and speed reads are valid for all four channels.
 
 ## Build and test
 

@@ -14,8 +14,6 @@ const char* mode_name(OperatingMode mode) {
       return "DISABLED";
     case OperatingMode::BODY_VELOCITY:
       return "VELOCITY";
-    case OperatingMode::DUTY_TEST:
-      return "DUTY_TEST";
     case OperatingMode::FAULT:
       return "FAULT";
   }
@@ -34,6 +32,8 @@ const char* fault_name(FaultCode fault) {
       return "BATTERY";
     case FaultCode::ROBOCLAW:
       return "ROBOCLAW";
+    case FaultCode::FEEDBACK:
+      return "FEEDBACK";
   }
   return "UNKNOWN";
 }
@@ -66,22 +66,6 @@ ParseResult parse_host_line(const char* line, uint32_t now_ms) {
     return result;
   }
 
-#if CMCU_ENABLE_DUTY_TEST
-  float duty[4] = {};
-  if (sscanf(line, "CMD_DUTY,%lu,%f,%f,%f,%f%n", &sequence, &duty[0], &duty[1],
-             &duty[2], &duty[3], &end) == 5 && line[end] == '\0' &&
-      isfinite(duty[0]) && isfinite(duty[1]) && isfinite(duty[2]) &&
-      isfinite(duty[3])) {
-    result.ok = true;
-    result.is_duty_test = true;
-    result.duty_test.sequence = static_cast<uint32_t>(sequence);
-    result.duty_test.received_ms = now_ms;
-    result.duty_test.valid = true;
-    for (size_t i = 0; i < kWheelCount; ++i) {
-      result.duty_test.duty[i] = duty[i];
-    }
-  }
-#endif
   return result;
 }
 

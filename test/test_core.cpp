@@ -20,6 +20,10 @@ static SystemState ready_state(uint32_t command_ms) {
   state.host.handshake_complete = true;
   state.host.velocity_command.valid = true;
   state.host.velocity_command.received_ms = command_ms;
+  for (size_t wheel = 0; wheel < kWheelCount; ++wheel) {
+    state.telemetry.encoder_valid[wheel] = true;
+    state.telemetry.speed_valid[wheel] = true;
+  }
   return state;
 }
 
@@ -39,23 +43,26 @@ static void test_protocol_handshake_and_velocity() {
   assert(!protocol::parse_host_line("CMD_VEL,42,0,0,junk", 123).ok);
 }
 
-static void test_duty_is_disabled_by_default() {
+static void test_duty_protocol_is_not_available() {
   const protocol::ParseResult duty =
       protocol::parse_host_line("CMD_DUTY,1,0.1,0,0,0", 10);
-  assert(!config::kDutyTestEnabled);
   assert(!duty.ok);
 }
 
 static void test_body_velocity_kinematics() {
   MotionCommand command = {};
-  command.linear_mps = 0.2f;
-  command.angular_radps = 0.4f;
+  command.linear_mps = 0.02f;
+  command.angular_radps = 0.1f;
   const WheelOutputs output = control_logic::body_velocity_targets(command);
   const float qpps_per_mps = config::kEncoderCountsPerWheelRevolution /
                              (2.0f * static_cast<float>(M_PI) *
                               config::kWheelRadiusMeters);
-  const int32_t expected_left = static_cast<int32_t>(lroundf(0.1f * qpps_per_mps));
-  const int32_t expected_right = static_cast<int32_t>(lroundf(0.3f * qpps_per_mps));
+  const float half_turn =
+      command.angular_radps * config::kEffectiveTrackWidthMeters * 0.5f;
+  const int32_t expected_left = static_cast<int32_t>(
+      lroundf((command.linear_mps - half_turn) * qpps_per_mps));
+  const int32_t expected_right = static_cast<int32_t>(
+      lroundf((command.linear_mps + half_turn) * qpps_per_mps));
   assert(near(output.qpps[0], expected_left));
   assert(near(output.qpps[1], expected_right));
   assert(output.qpps[0] == output.qpps[2]);
@@ -109,6 +116,15 @@ static void test_state_requires_both_controllers() {
   assert(state.fault == FaultCode::ROBOCLAW);
 }
 
+static void test_state_requires_all_encoder_and_speed_feedback() {
+  SystemState state = ready_state(1990);
+  state.telemetry.speed_valid[static_cast<size_t>(WheelId::RR)] = false;
+  control_logic::update_state(state, 2000);
+  assert(state.mode == OperatingMode::FAULT);
+  assert(state.fault == FaultCode::FEEDBACK);
+  assert(state.wheel_outputs.qpps[0] == 0);
+}
+
 static void test_telemetry_fields_are_ordered() {
   SystemState state = ready_state(100);
   state.mode = OperatingMode::BODY_VELOCITY;
@@ -133,12 +149,13 @@ static void test_telemetry_fields_are_ordered() {
 
 int main() {
   test_protocol_handshake_and_velocity();
-  test_duty_is_disabled_by_default();
+  test_duty_protocol_is_not_available();
   test_body_velocity_kinematics();
   test_saturation_preserves_ratio();
   test_slew_and_reversal_cross_zero();
   test_state_requires_fresh_host_command();
   test_state_requires_both_controllers();
+  test_state_requires_all_encoder_and_speed_feedback();
   test_telemetry_fields_are_ordered();
   return 0;
 }

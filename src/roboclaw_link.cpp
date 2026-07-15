@@ -12,12 +12,6 @@ RoboClaw g_front(&board::front_roboclaw_uart, config::kRoboclawTimeoutUs);
 RoboClaw g_rear(&board::rear_roboclaw_uart, config::kRoboclawTimeoutUs);
 uint32_t g_last_telemetry_ms = 0;
 
-#if CMCU_ENABLE_DUTY_TEST
-int16_t apply_direction(int16_t value, int8_t direction) {
-  return static_cast<int16_t>(value * direction);
-}
-#endif
-
 int32_t apply_direction(int32_t value, int8_t direction) {
   return value * direction;
 }
@@ -57,16 +51,16 @@ bool read_controller(RoboClaw& roboclaw, uint8_t address, size_t first_wheel,
   }
 
   controller.error_status = roboclaw.ReadError(address, &controller.error_valid);
-  const bool complete = encoder_valid[0] && encoder_valid[1] && speed_valid[0] &&
-                        speed_valid[1] && controller.error_valid;
-  if (complete) {
+  const bool feedback_complete = encoder_valid[0] && encoder_valid[1] &&
+                                 speed_valid[0] && speed_valid[1];
+  if (controller.error_valid) {
     controller.last_response_ms = now_ms;
   }
   controller.healthy =
       controller.last_response_ms != 0 &&
       (now_ms - controller.last_response_ms) <= config::kRoboclawHealthTimeoutMs &&
       (controller.error_status & config::kRoboclawCriticalErrorMask) == 0;
-  return complete;
+  return feedback_complete && controller.error_valid;
 }
 
 }  // namespace
@@ -122,31 +116,12 @@ void apply_motor_outputs(SystemState& state, uint32_t now_ms) {
   const int32_t rr_qpps = apply_direction(
       state.wheel_outputs.qpps[3], kMotorMap[3].command_direction);
 
-  bool front_ok = false;
-  bool rear_ok = false;
-  if (state.mode == OperatingMode::DUTY_TEST) {
-#if CMCU_ENABLE_DUTY_TEST
-    const int16_t fl = apply_direction(
-        state.wheel_outputs.duty[0], kMotorMap[0].command_direction);
-    const int16_t fr = apply_direction(
-        state.wheel_outputs.duty[1], kMotorMap[1].command_direction);
-    const int16_t rl = apply_direction(
-        state.wheel_outputs.duty[2], kMotorMap[2].command_direction);
-    const int16_t rr = apply_direction(
-        state.wheel_outputs.duty[3], kMotorMap[3].command_direction);
-    front_ok = g_front.DutyM1M2(config::kFrontRoboclawAddress,
-                               static_cast<uint16_t>(fl), static_cast<uint16_t>(fr));
-    rear_ok = g_rear.DutyM1M2(config::kRearRoboclawAddress,
-                             static_cast<uint16_t>(rl), static_cast<uint16_t>(rr));
-#endif
-  } else {
-    front_ok = g_front.SpeedM1M2(config::kFrontRoboclawAddress,
-                                static_cast<uint32_t>(fl_qpps),
-                                static_cast<uint32_t>(fr_qpps));
-    rear_ok = g_rear.SpeedM1M2(config::kRearRoboclawAddress,
-                              static_cast<uint32_t>(rl_qpps),
-                              static_cast<uint32_t>(rr_qpps));
-  }
+  const bool front_ok = g_front.SpeedM1M2(
+      config::kFrontRoboclawAddress, static_cast<uint32_t>(fl_qpps),
+      static_cast<uint32_t>(fr_qpps));
+  const bool rear_ok = g_rear.SpeedM1M2(
+      config::kRearRoboclawAddress, static_cast<uint32_t>(rl_qpps),
+      static_cast<uint32_t>(rr_qpps));
 
   if (!front_ok) {
     state.front_roboclaw.healthy = false;
