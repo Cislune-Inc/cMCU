@@ -123,6 +123,19 @@ void apply_motor_outputs(SystemState& state, uint32_t now_ms) {
       config::kRearRoboclawAddress, static_cast<uint32_t>(rl_qpps),
       static_cast<uint32_t>(rr_qpps));
 
+  board::debug_uart.print("MOTOR QPPS: FL=");
+  board::debug_uart.print(fl_qpps);
+  board::debug_uart.print(" FR=");
+  board::debug_uart.print(fr_qpps);
+  board::debug_uart.print(" RL=");
+  board::debug_uart.print(rl_qpps);
+  board::debug_uart.print(" RR=");
+  board::debug_uart.print(rr_qpps);
+  board::debug_uart.print(" front_ok=");
+  board::debug_uart.print(front_ok);
+  board::debug_uart.print(" rear_ok=");
+  board::debug_uart.println(rear_ok);
+
   if (!front_ok) {
     state.front_roboclaw.healthy = false;
   }

@@ -23,6 +23,9 @@ void accept_sequence(HostState& host, uint32_t sequence) {
 }
 
 void handle_line(SystemState& state, const char* line, uint32_t now_ms) {
+  board::debug_uart.print("RX: ");
+  board::debug_uart.println(line);
+
   const protocol::ParseResult result = protocol::parse_host_line(line, now_ms);
   if (!result.ok) {
     board::host_uart.println("ERR,INVALID");
@@ -64,6 +67,7 @@ void handle_line(SystemState& state, const char* line, uint32_t now_ms) {
 }  // namespace
 
 void setup_host_link() {
+  board::debug_uart.begin(config::kHostBaud);
   board::host_uart.begin(config::kHostBaud);
 }
 
