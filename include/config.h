@@ -22,7 +22,7 @@ constexpr uint32_t kHostTimeoutMs = 250;
 constexpr uint32_t kRoboclawHealthTimeoutMs = 250;
 constexpr uint32_t kStartupLockoutMs = 1000;
 
-constexpr float kBatteryCriticalVolts = 18.8f;
+constexpr float kBatteryCriticalVolts = 18.0f;
 constexpr int16_t kMaxDebugDuty = 4096;
 constexpr int32_t kMaxQpps = 4000;
 constexpr int32_t kMaxQppsChangePerSecond = 10000;
