@@ -9,7 +9,9 @@
 namespace {
 
 constexpr size_t kBufferLen = 128;
+constexpr size_t kExtraUartRxBufferLen = 512;
 char g_rx_buffer[kBufferLen];
+uint8_t g_extra_uart_rx_buffer[kExtraUartRxBufferLen];
 size_t g_rx_len = 0;
 
 bool sequence_is_newer(uint32_t sequence, const HostState& host) {
@@ -68,6 +70,8 @@ void handle_line(SystemState& state, const char* line, uint32_t now_ms) {
 
 void setup_host_link() {
   board::debug_uart.begin(config::kHostBaud);
+  board::host_uart.addMemoryForRead(g_extra_uart_rx_buffer,
+                                    sizeof(g_extra_uart_rx_buffer));
   board::host_uart.begin(config::kHostBaud);
 }
 
