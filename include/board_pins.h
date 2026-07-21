@@ -5,7 +5,7 @@
 namespace board {
 
 inline auto& debug_uart = Serial;
-inline HardwareSerial& host_uart = Serial1;
+inline auto& host_uart = Serial1;
 inline HardwareSerial& front_roboclaw_uart = Serial2;
 inline HardwareSerial& rear_roboclaw_uart = Serial3;
 
